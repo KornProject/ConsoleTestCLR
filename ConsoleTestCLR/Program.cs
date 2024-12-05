@@ -24,23 +24,35 @@ unsafe class Program
 
         var targetPrecode = targetDesc->GetPrecode()->AsFixupPrecode()->GetData();
         var sourcePrecode = sourceDesc->GetPrecode()->AsFixupPrecode()->GetData();
-        *targetPrecode = *sourcePrecode;
 
-        Console.WriteLine("test2");
+        targetTargetBackup = targetPrecode->Target;
+        targetTarget = &targetPrecode->Target;
+        sourceTarget = &sourcePrecode->Target;
+
+        targetPrecode->Target = sourcePrecode->Target;
+
+        *targetTarget = *sourceTarget;
+
+        while (true)
+            Console.WriteLine("test2");
 
         Console.ReadLine();
     }
 
+    static void* targetTargetBackup;
+    static void** targetTarget;
+    static void** sourceTarget;
+
     static void HookedWriteLine(string? text)
     {
-        Console.Write($"\nhooked text: {text}");
+        *targetTarget = targetTargetBackup;
+        Console.WriteLine($"hooked: {text}");
+        Console.WriteLine(text);
+        *targetTarget = *sourceTarget;
     }
 }
 
-unsafe struct clr_LoaderAllocator
-{
-
-}
+unsafe struct clr_LoaderAllocator { }
 
 [StructLayout(LayoutKind.Sequential, Size = 0x10, Pack = 0)]
 unsafe struct clr_MethodDesc
