@@ -1,5 +1,37 @@
 ﻿using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
+unsafe class MethodHook
+{
+    public MethodHook(MethodInfo target, MethodInfo source)
+    {
+        RuntimeHelpers.PrepareMethod(target.MethodHandle);
+        RuntimeHelpers.PrepareMethod(source.MethodHandle);
+
+        var targetData = clr_MethodDesc.ExtractFrom(target)->GetPrecode()->AsFixupPrecode()->GetData();
+        var sourceData = clr_MethodDesc.ExtractFrom(source)->GetPrecode()->AsFixupPrecode()->GetData();
+
+        originalTarget = targetData->Target;
+
+        this.target = &targetData->Target;
+        this.source = &sourceData->Target;
+    }
+
+    void* originalTarget;
+    void** target;
+    void** source;
+
+    public void Hook()
+    {
+        *target = *source;
+    }
+
+    public void Unhook()
+    {
+        *target = originalTarget;
+    }
+}
 
 unsafe class Program
 {
@@ -17,21 +49,8 @@ unsafe class Program
         var sourceMethod = HookedWriteLine;
         var source = sourceMethod.Method;
 
-        var targetDesc = clr_MethodDesc.ExtractFrom(target);
-        var sourceDesc = clr_MethodDesc.ExtractFrom(source);
-
-        Console.WriteLine("test1");
-
-        var targetPrecode = targetDesc->GetPrecode()->AsFixupPrecode()->GetData();
-        var sourcePrecode = sourceDesc->GetPrecode()->AsFixupPrecode()->GetData();
-
-        targetTargetBackup = targetPrecode->Target;
-        targetTarget = &targetPrecode->Target;
-        sourceTarget = &sourcePrecode->Target;
-
-        targetPrecode->Target = sourcePrecode->Target;
-
-        *targetTarget = *sourceTarget;
+        hook = new MethodHook(target, source);
+        hook.Hook();
 
         while (true)
             Console.WriteLine("test2");
@@ -39,16 +58,14 @@ unsafe class Program
         Console.ReadLine();
     }
 
-    static void* targetTargetBackup;
-    static void** targetTarget;
-    static void** sourceTarget;
+    static MethodHook hook;
 
     static void HookedWriteLine(string? text)
     {
-        *targetTarget = targetTargetBackup;
+        hook.Unhook();
         Console.WriteLine($"hooked: {text}");
         Console.WriteLine(text);
-        *targetTarget = *sourceTarget;
+        hook.Hook();
     }
 }
 
