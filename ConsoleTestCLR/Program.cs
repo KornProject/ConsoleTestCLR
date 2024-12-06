@@ -1,7 +1,74 @@
-﻿using System.Reflection;
+﻿using System.Formats.Asn1;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
+public unsafe class Program
+{
+    public static void Main()
+    {
+        var writeLineHook = MethodHook.Create((Action<string?>)Console.WriteLine);
+        writeLineHook.AddHook((Delegate)HookedWriteLine);
+        writeLineHook.AddHook((Delegate)Hooked2WriteLine);
+        writeLineHook.Hook();
+
+        /*
+        var readLineHook = MethodHook.Create((Func<string?>)Console.ReadLine);
+        readLineHook.AddHook((Delegate)HookedReadLine);
+        readLineHook.AddHook((Delegate)Hooked2ReadLine);
+        readLineHook.Hook();
+        */
+
+        Console.WriteLine("a");
+
+        Console.ReadLine();
+    }
+
+    public static bool HookedWriteLine(ref string? text)
+    {
+        Console.WriteLine("Hello from 1-th hook!");
+
+        if (text is null)
+            return true;
+
+        text += " hooked!";
+
+        return true;
+    }
+
+    public static bool Hooked2WriteLine(ref string? text)
+    {
+        Console.WriteLine("Hello from 2-th hook!");
+
+        if (text is null)
+            return true;
+
+        text = text.Substring(4);
+
+        return true;
+    }
+
+    public static bool HookedReadLine(ref string? result)
+    {
+        if (DateTime.Now.Ticks % 3 == 0)
+        {
+            result = "bad data!";
+            return false;
+        }
+
+        return true;
+    }
+
+    public static bool Hooked2ReadLine(ref string? result)
+    {
+        if (result is null)
+            result = "hooked text!";
+
+        return false;
+    }
+}
 
 unsafe struct MethodSnapshoot
 {
@@ -22,7 +89,9 @@ unsafe struct MethodSnapshoot
 
 unsafe class MethodHook
 {
-    public MethodHook(MethodInfoSummary targetMethod)
+    static List<MethodHook> ActiveHooks = [];
+
+    MethodHook(MethodInfoSummary targetMethod)
     {
         TargetMethod = targetMethod;
 
@@ -92,6 +161,14 @@ unsafe class MethodHook
         StubMethod = MultiHookMethodGenerator.Generate(this, TargetMethod, Hooks);
         StubSnapshoot = new(StubMethod);
     }
+
+    public static MethodHook Create(MethodInfoSummary targetMethod)
+    {
+        var existsHook = ActiveHooks.FirstOrDefault(hook => hook.TargetMethod == targetMethod.Method);
+        if (existsHook is not null)
+            return existsHook;
+        return new(targetMethod);
+    }
 }
 
 unsafe static class MultiHookMethodGenerator
@@ -116,6 +193,7 @@ unsafe static class MultiHookMethodGenerator
 
     public static DynamicMethod Generate(MethodHook methodHook, MethodInfo target, List<MethodInfo> hooks)
     {
+        var targetParameters = target.GetParameters().Select(param => param.ParameterType).ToArray();
         var moduleBuilder = ResolveDynamicAssembly();
         var typeBuilder = moduleBuilder.DefineType(Guid.NewGuid().ToString(), TypeAttributes.Public | TypeAttributes.AutoClass | TypeAttributes.AnsiClass | TypeAttributes.BeforeFieldInit);
         var fieldBuilder = typeBuilder.DefineField(Guid.NewGuid().ToString(), typeof(nint), FieldAttributes.Public | FieldAttributes.Static);
@@ -127,7 +205,7 @@ unsafe static class MultiHookMethodGenerator
             attributes:        MethodAttributes.Public | MethodAttributes.Static,
             callingConvention: CallingConventions.Standard,
             returnType:        target.ReturnType,
-            parameterTypes:    target.GetParameters().Select(param => param.ParameterType).ToArray(),
+            parameterTypes:    targetParameters,
             owner:             type,
             skipVisibility:    true
         );
@@ -136,7 +214,11 @@ unsafe static class MultiHookMethodGenerator
 
         GenerateIL();
 
-        method.CreateDelegate(typeof(Action)); // force the CLR to compile this method
+        Type delegateType;
+        if (target.ReturnType == typeof(void))
+            delegateType = Expression.GetActionType(targetParameters);
+        else delegateType = Expression.GetFuncType([target.ReturnType, .. targetParameters]);
+        method.CreateDelegate(delegateType); // force the CLR to compile this method
         
         var snapshoot = new MethodSnapshoot(method);
         stubTargetField.SetValue(null, (nint)snapshoot.TargetSnapshoot);
@@ -160,7 +242,7 @@ unsafe static class MultiHookMethodGenerator
                 var targetCallCost = targetParameters.Length + 1 /* …, call */;
                 var prologueSize = 7;
                 var bodySize = hookCallCost * hooks.Count + targetCallCost;
-                var epilogueSize = 1;
+                var epilogueSize = 4;
                 var methodSize = prologueSize + bodySize + epilogueSize;
                 var epilogueLocation = prologueSize + bodySize - 1;
 
@@ -183,8 +265,7 @@ unsafe static class MultiHookMethodGenerator
                     il.Emit(OpCodes.Brfalse, returnLabel);
                 }
 
-                /* target method calling */
-                
+                /* target method calling */                
                 for (var argIndex = 0; argIndex < targetParameters.Length; argIndex++)
                 {
                     if (targetParameters[argIndex].ParameterType.IsByRef)
@@ -204,7 +285,54 @@ unsafe static class MultiHookMethodGenerator
             }
             else
             {
+                var resultLocal = il.DeclareLocal(target.ReturnType);
+                var hookCallCost = targetParameters.Length + 3 /* …, ldloca, call, br.false */;
+                var targetCallCost = targetParameters.Length + 1 /* …, call, stoloc */;
+                var prologueSize = 7;
+                var bodySize = hookCallCost * hooks.Count + targetCallCost;
+                var epilogueSize = 5;
+                var methodSize = prologueSize + bodySize + epilogueSize;
+                var epilogueLocation = prologueSize + bodySize - 1;
 
+                /* prologue */
+                il.Emit(OpCodes.Ldc_I8, targetPointerAddress);
+                il.Emit(OpCodes.Conv_I);
+                il.Emit(OpCodes.Stloc_0);
+                il.Emit(OpCodes.Ldloc_0);
+                il.Emit(OpCodes.Ldc_I8, targetAddress);
+                il.Emit(OpCodes.Conv_I);
+                il.Emit(OpCodes.Stind_I);
+
+                /* hooks calling */
+                foreach (var hook in hooks)
+                {
+                    for (var argIndex = 0; argIndex < targetParameters.Length; argIndex++)
+                        il.Emit(OpCodes.Ldarga_S, (byte)argIndex);
+                    il.Emit(OpCodes.Ldloca_S, 1);
+
+                    il.Emit(OpCodes.Call, hook);
+                    il.Emit(OpCodes.Brfalse, returnLabel);
+                }
+
+                /* target method calling */
+                for (var argIndex = 0; argIndex < targetParameters.Length; argIndex++)
+                {
+                    if (targetParameters[argIndex].ParameterType.IsByRef)
+                        il.Emit(OpCodes.Ldarga_S, (byte)argIndex);
+                    else il.Emit(OpCodes.Ldarg_S, (byte)argIndex);
+                }
+
+                il.Emit(OpCodes.Call, target);
+                il.Emit(OpCodes.Stloc_1);
+
+                il.MarkLabel(returnLabel);
+
+                /* epilogue */
+                il.Emit(OpCodes.Ldloc_0);
+                il.Emit(OpCodes.Ldsfld, stubTargetField);
+                il.Emit(OpCodes.Stind_I);
+                il.Emit(OpCodes.Ldloc_1);
+                il.Emit(OpCodes.Ret);
             }
         }
     }
@@ -241,48 +369,6 @@ public record struct MethodInfoSummary(MethodInfo Method)
     public static implicit operator MethodInfo(MethodInfoSummary self) => self.Method;
     public static implicit operator MethodInfoSummary(MethodInfo method) => new(method);
     public static implicit operator MethodInfoSummary(Delegate method) => new(method.Method);
-}
-
-public unsafe class Program
-{
-    public static void Main()
-    {
-        var hook = new MethodHook((Action<string?>)Console.WriteLine);
-
-        hook.AddHook((Delegate)HookedWriteLine);
-        hook.AddHook((Delegate)Hooked2WriteLine);
-
-        hook.Hook();
-
-        while (true)
-            Console.WriteLine("test2");
-
-        Console.ReadLine();
-    }
-
-    public static bool HookedWriteLine(ref string? text)
-    {
-        Console.WriteLine("Hello from 1-th hook!");
-
-        if (text is null)
-            return true;
-
-        text += " hooked!";
-
-        return true;
-    }
-
-    public static bool Hooked2WriteLine(ref string? text)
-    {
-        Console.WriteLine("Hello from 2-th hook!");
-
-        if (text is null)
-            return true;
-
-        text = text.Substring(4);
-
-        return true;
-    }
 }
 
 unsafe struct clr_LoaderAllocator { }
