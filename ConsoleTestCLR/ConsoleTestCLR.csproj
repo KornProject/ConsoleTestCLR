@@ -2,10 +2,16 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Korn.CLR\Korn.CLR\Korn.CLR.csproj" />
+    <ProjectReference Include="..\..\Korn.Hooking\Korn.Hooking\Korn.Hooking.csproj" />
+  </ItemGroup>
 
 </Project>

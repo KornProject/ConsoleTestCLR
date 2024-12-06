@@ -1,22 +1,54 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.12.35506.116 d17.12
+VisualStudioVersion = 17.12.35506.116
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConsoleTestCLR", "ConsoleTestCLR\ConsoleTestCLR.csproj", "{BEF28CC2-4618-4234-915B-7ADAF2884181}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Korn", "Korn", "{3568866E-786A-4836-ADAC-BDA9EA8DE14E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Korn.CLR", "..\Korn.CLR\Korn.CLR\Korn.CLR.csproj", "{AE50B428-3AF6-417D-AD6F-358ECD297BC1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Korn.Hooking", "..\Korn.Hooking\Korn.Hooking\Korn.Hooking.csproj", "{2215701A-19F0-4EE4-98DB-2F1091D31B70}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Debug|x64.ActiveCfg = Debug|x64
+		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Debug|x64.Build.0 = Debug|x64
 		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Release|x64.ActiveCfg = Release|x64
+		{BEF28CC2-4618-4234-915B-7ADAF2884181}.Release|x64.Build.0 = Release|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Debug|Any CPU.Build.0 = Debug|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Debug|x64.ActiveCfg = Debug|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Debug|x64.Build.0 = Debug|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Release|Any CPU.ActiveCfg = Release|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Release|Any CPU.Build.0 = Release|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Release|x64.ActiveCfg = Release|x64
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1}.Release|x64.Build.0 = Release|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Debug|Any CPU.Build.0 = Debug|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Debug|x64.ActiveCfg = Debug|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Debug|x64.Build.0 = Debug|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Release|Any CPU.ActiveCfg = Release|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Release|Any CPU.Build.0 = Release|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Release|x64.ActiveCfg = Release|x64
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{AE50B428-3AF6-417D-AD6F-358ECD297BC1} = {3568866E-786A-4836-ADAC-BDA9EA8DE14E}
+		{2215701A-19F0-4EE4-98DB-2F1091D31B70} = {3568866E-786A-4836-ADAC-BDA9EA8DE14E}
 	EndGlobalSection
 EndGlobal
