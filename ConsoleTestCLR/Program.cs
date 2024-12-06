@@ -1,5 +1,4 @@
-﻿using System.Formats.Asn1;
-using System.Linq.Expressions;
+﻿using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
@@ -76,7 +75,10 @@ unsafe struct MethodSnapshoot
     public MethodSnapshoot(clr_MethodDesc* methodDesc)
     {
         if (methodDesc is null)
-            throw new ArgumentNullException($"[Korn.Hooking] MethodSnapshoot->.ctor(clr_MethodDesc*): The method descriptor is null");
+            throw new ArgumentNullException(
+                $"[Korn.Hooking] MethodSnapshoot->.ctor(clr_MethodDesc*): " +
+                 "The method descriptor is null"
+            );
 
         var data = methodDesc->GetPrecode()->AsFixupPrecode()->GetData();
         Target = &data->Target;
@@ -106,10 +108,71 @@ unsafe class MethodHook
     public MethodInfo? StubMethod { get; private set; }
 
     public readonly List<MethodInfo> Hooks = [];
-    public bool IsHooked { get; private set; }   
+    public bool IsHooked { get; private set; }
+
+    void VerifySignature(MethodInfo method)
+    {
+        var methodParameters = method.GetParameters().Select(param => param.ParameterType).ToList();
+        var targetParameters = TargetMethod.GetParameters().Select(param => param.ParameterType).ToList();
+
+        string? message = null;
+
+        if (method.ReturnType != typeof(bool))
+        {
+            message = "return type must be 'bool'";
+            goto Return;
+        }
+
+        var exprectedArgumentTypes = targetParameters.ToList();
+        if (TargetMethod.ReturnType != typeof(void))
+            exprectedArgumentTypes.Add(TargetMethod.ReturnType);
+
+        if (method.GetParameters().Length != exprectedArgumentTypes.Count)
+        {
+            message = "wrong number of arguments";
+            goto Return;
+        }
+
+        var foundNonRefArgument = methodParameters.FirstOrDefault(param => !param.IsByRef);
+        if (foundNonRefArgument is not null)
+        {
+            message = "all arguments must have the ref modifier";
+            goto Return;
+        }
+
+        for (var argIndex = 0; argIndex < exprectedArgumentTypes.Count; argIndex++)
+            if (exprectedArgumentTypes[argIndex].FullName!.Contains(methodParameters[argIndex].FullName!))
+            // you are laughing, but I really don't know how to do type checking with RefBy ignored
+            {
+                message = $"the type of {argIndex + 1}-th, {methodParameters[argIndex].Name}, " + 
+                          $"argument is not the same as expected {exprectedArgumentTypes[argIndex].Name}";
+                goto Return;
+            }
+
+        Return:
+        if (message is not null)
+            throw new Exception(
+                $"[Korn.Hooking] MethodHook->VerifySignature: Bad method signature - " + message + ".\n" +
+                $"Expected signature: {GenerateSignature()}"
+            );
+
+        return;
+
+        string GenerateSignature()
+        {
+            var types = TargetMethod.GetParameters().Select(param => param.ParameterType).ToList();
+            if (TargetMethod.ReturnType != typeof(void))
+                types.Add(TargetMethod.ReturnType);
+
+            return $"bool HookImplementation({string.Join(' ', types.Select(t => $"ref {t.Name}"))})";
+        }
+            
+    }
 
     public void AddHook(MethodInfoSummary hook)
     {
+        VerifySignature(hook);
+
         var isHooked = IsHooked;
         if (isHooked)
             Unhook();
@@ -193,10 +256,22 @@ unsafe static class MultiHookMethodGenerator
 
     public static DynamicMethod Generate(MethodHook methodHook, MethodInfo target, List<MethodInfo> hooks)
     {
-        var targetParameters = target.GetParameters().Select(param => param.ParameterType).ToArray();
+        var targetParameters = 
+            target
+            .GetParameters()
+            .Select(param => param.ParameterType)
+            .ToArray();
+
         var moduleBuilder = ResolveDynamicAssembly();
-        var typeBuilder = moduleBuilder.DefineType(Guid.NewGuid().ToString(), TypeAttributes.Public | TypeAttributes.AutoClass | TypeAttributes.AnsiClass | TypeAttributes.BeforeFieldInit);
-        var fieldBuilder = typeBuilder.DefineField(Guid.NewGuid().ToString(), typeof(nint), FieldAttributes.Public | FieldAttributes.Static);
+        var typeBuilder = moduleBuilder.DefineType(
+            Guid.NewGuid().ToString(),
+            TypeAttributes.Public | TypeAttributes.AutoClass | TypeAttributes.AnsiClass | TypeAttributes.BeforeFieldInit
+        );
+        var fieldBuilder = typeBuilder.DefineField(
+            Guid.NewGuid().ToString(), 
+            typeof(nint), 
+            FieldAttributes.Public | FieldAttributes.Static
+        );
         var type = typeBuilder.CreateType();
         var stubTargetField = type.GetRuntimeFields().First()!;
 
@@ -238,14 +313,6 @@ unsafe static class MultiHookMethodGenerator
 
             if (target.ReturnType == typeof(void))
             {
-                var hookCallCost = targetParameters.Length + 2 /* …, call, br.false */;
-                var targetCallCost = targetParameters.Length + 1 /* …, call */;
-                var prologueSize = 7;
-                var bodySize = hookCallCost * hooks.Count + targetCallCost;
-                var epilogueSize = 4;
-                var methodSize = prologueSize + bodySize + epilogueSize;
-                var epilogueLocation = prologueSize + bodySize - 1;
-
                 /* prologue */
                 il.Emit(OpCodes.Ldc_I8, targetPointerAddress);
                 il.Emit(OpCodes.Conv_I);
@@ -285,15 +352,6 @@ unsafe static class MultiHookMethodGenerator
             }
             else
             {
-                var resultLocal = il.DeclareLocal(target.ReturnType);
-                var hookCallCost = targetParameters.Length + 3 /* …, ldloca, call, br.false */;
-                var targetCallCost = targetParameters.Length + 1 /* …, call, stoloc */;
-                var prologueSize = 7;
-                var bodySize = hookCallCost * hooks.Count + targetCallCost;
-                var epilogueSize = 5;
-                var methodSize = prologueSize + bodySize + epilogueSize;
-                var epilogueLocation = prologueSize + bodySize - 1;
-
                 /* prologue */
                 il.Emit(OpCodes.Ldc_I8, targetPointerAddress);
                 il.Emit(OpCodes.Conv_I);
@@ -340,32 +398,6 @@ unsafe static class MultiHookMethodGenerator
 
 public record struct MethodInfoSummary(MethodInfo Method)
 {
-    public bool IsSignatureEquals(MethodInfoSummary equalsWith)
-    {
-        var a = Method;
-        var b = equalsWith.Method;
-
-        return IsEqualsAttributes() && IsEqualsReturnType() && IsEqualsArguments();
-
-        bool IsEqualsAttributes() => a.IsStatic == b.IsStatic;
-        bool IsEqualsReturnType() => a.ReturnType == b.ReturnType;
-        bool IsEqualsArguments()
-        {
-            var aArgs = a.GetParameters();
-            var bArgs = b.GetParameters();
-
-            if (aArgs.Length != bArgs.Length)
-                return false;
-
-            var argsCount = aArgs.Length;
-            for (var argIndex = 0; argIndex < argsCount; argIndex++)
-                if (aArgs[argIndex].ParameterType != aArgs[argIndex].ParameterType)
-                    return false;
-
-            return true;
-        }
-    }
-
     public static implicit operator MethodInfo(MethodInfoSummary self) => self.Method;
     public static implicit operator MethodInfoSummary(MethodInfo method) => new(method);
     public static implicit operator MethodInfoSummary(Delegate method) => new(method.Method);
@@ -545,8 +577,9 @@ unsafe struct clr_MethodDesc
         return null;
     }
 
+    // so sweetty code, oooff - https://github.com/dotnet/dotnet/blob/df0660d28d5e8252a4f10823c41e76e9366c492a/src/runtime/src/coreclr/vm/method.cpp#L2825
     public bool DetermineIsEligibleForTieredCompilationInvariantForAllMethodsInChunk()
-        => false; // so sweetty code, oooff - https://github.com/dotnet/dotnet/blob/df0660d28d5e8252a4f10823c41e76e9366c492a/src/runtime/src/coreclr/vm/method.cpp#L2825
+        => false;
 
     public void* GetNativeCode()
     {
