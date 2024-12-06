@@ -1,55 +1,257 @@
 ﻿using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-unsafe class MethodHook
+unsafe struct MethodSnapshoot
 {
-    public MethodHook(MethodInfo target, MethodInfo source)
+    public MethodSnapshoot(MethodInfo methodInfo) : this(clr_MethodDesc.ExtractFrom(methodInfo)) { }
+    public MethodSnapshoot(clr_MethodDesc* methodDesc)
     {
-        RuntimeHelpers.PrepareMethod(target.MethodHandle);
-        RuntimeHelpers.PrepareMethod(source.MethodHandle);
+        if (methodDesc is null)
+            throw new ArgumentNullException($"[Korn.Hooking] MethodSnapshoot->.ctor(clr_MethodDesc*): The method descriptor is null");
 
-        var targetData = clr_MethodDesc.ExtractFrom(target)->GetPrecode()->AsFixupPrecode()->GetData();
-        var sourceData = clr_MethodDesc.ExtractFrom(source)->GetPrecode()->AsFixupPrecode()->GetData();
-
-        originalTarget = targetData->Target;
-
-        this.target = &targetData->Target;
-        this.source = &sourceData->Target;
+        var data = methodDesc->GetPrecode()->AsFixupPrecode()->GetData();
+        Target = &data->Target;
+        TargetSnapshoot = data->Target;
     }
 
-    void* originalTarget;
-    void** target;
-    void** source;
+    public void** Target;
+    public void* TargetSnapshoot;
+}
+
+unsafe class MethodHook
+{
+    public MethodHook(MethodInfoSummary targetMethod)
+    {
+        TargetMethod = targetMethod;
+
+        RuntimeHelpers.PrepareMethod(TargetMethod.MethodHandle);
+        TargetSnapshoot = new(targetMethod);
+    }
+
+    public readonly MethodSnapshoot TargetSnapshoot;
+    public readonly MethodInfo TargetMethod;
+
+    public MethodSnapshoot StubSnapshoot { get; private set; }
+    public MethodInfo? StubMethod { get; private set; }
+
+    public readonly List<MethodInfo> Hooks = [];
+    public bool IsHooked { get; private set; }   
+
+    public void AddHook(MethodInfoSummary hook)
+    {
+        var isHooked = IsHooked;
+        if (isHooked)
+            Unhook();
+
+        Hooks.Add(hook);
+        BuildStub();
+
+        if (isHooked)
+            Hook();
+    }
+
+    public void RemoveHook(MethodInfoSummary hook)
+    {        
+        var isRemoved = Hooks.Remove(hook);
+
+        if (isRemoved)
+        {
+            var isHooked = IsHooked;
+            if (isHooked)
+                Unhook();
+
+            BuildStub();
+
+            if (isHooked)
+                Hook();
+        }
+    }
 
     public void Hook()
     {
-        *target = *source;
+        if (IsHooked)
+            return;
+        IsHooked = true;
+
+        *TargetSnapshoot.Target = StubSnapshoot.TargetSnapshoot;
     }
 
     public void Unhook()
     {
-        *target = originalTarget;
+        if (!IsHooked)
+            return;
+        IsHooked = false;
+
+        *TargetSnapshoot.Target = TargetSnapshoot.TargetSnapshoot;
+    }
+
+    void BuildStub()
+    {
+        StubMethod = MultiHookMethodGenerator.Generate(this, TargetMethod, Hooks);
+        StubSnapshoot = new(StubMethod);
     }
 }
 
-unsafe class Program
+unsafe static class MultiHookMethodGenerator
+{
+    static ModuleBuilder? definedModule;
+    static ModuleBuilder ResolveDynamicAssembly()
+    {
+        if (definedModule is null)
+            definedModule = DefineDynamicAssembly(Guid.NewGuid().ToString());
+
+        return definedModule;
+    }
+
+    static ModuleBuilder DefineDynamicAssembly(string name)
+    {
+        var assemblyName = new AssemblyName(name);
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);  
+        var module = assembly.DefineDynamicModule(name);
+
+        return module;
+    }
+
+    public static DynamicMethod Generate(MethodHook methodHook, MethodInfo target, List<MethodInfo> hooks)
+    {
+        var moduleBuilder = ResolveDynamicAssembly();
+        var typeBuilder = moduleBuilder.DefineType(Guid.NewGuid().ToString(), TypeAttributes.Public | TypeAttributes.AutoClass | TypeAttributes.AnsiClass | TypeAttributes.BeforeFieldInit);
+        var fieldBuilder = typeBuilder.DefineField(Guid.NewGuid().ToString(), typeof(nint), FieldAttributes.Public | FieldAttributes.Static);
+        var type = typeBuilder.CreateType();
+        var stubTargetField = type.GetRuntimeFields().First()!;
+
+        var method = new DynamicMethod(
+            name:              Guid.NewGuid().ToString(),
+            attributes:        MethodAttributes.Public | MethodAttributes.Static,
+            callingConvention: CallingConventions.Standard,
+            returnType:        target.ReturnType,
+            parameterTypes:    target.GetParameters().Select(param => param.ParameterType).ToArray(),
+            owner:             type,
+            skipVisibility:    true
+        );
+
+        method.InitLocals = false;
+
+        GenerateIL();
+
+        method.CreateDelegate(typeof(Action)); // force the CLR to compile this method
+        
+        var snapshoot = new MethodSnapshoot(method);
+        stubTargetField.SetValue(null, (nint)snapshoot.TargetSnapshoot);
+
+        return method;  
+
+        void GenerateIL()
+        {
+            var il = method.GetILGenerator();
+
+            var targetLocal = il.DeclareLocal(typeof(void).MakePointerType().MakePointerType());
+            var returnLabel = il.DefineLabel();
+
+            var targetParameters = target.GetParameters();
+            long targetPointerAddress = (nint)methodHook.TargetSnapshoot.Target;
+            long targetAddress = (nint)methodHook.TargetSnapshoot.TargetSnapshoot;
+
+            if (target.ReturnType == typeof(void))
+            {
+                var hookCallCost = targetParameters.Length + 2 /* …, call, br.false */;
+                var targetCallCost = targetParameters.Length + 1 /* …, call */;
+                var prologueSize = 7;
+                var bodySize = hookCallCost * hooks.Count + targetCallCost;
+                var epilogueSize = 1;
+                var methodSize = prologueSize + bodySize + epilogueSize;
+                var epilogueLocation = prologueSize + bodySize - 1;
+
+                /* prologue */
+                il.Emit(OpCodes.Ldc_I8, targetPointerAddress);
+                il.Emit(OpCodes.Conv_I);
+                il.Emit(OpCodes.Stloc_0);
+                il.Emit(OpCodes.Ldloc_0);
+                il.Emit(OpCodes.Ldc_I8, targetAddress);
+                il.Emit(OpCodes.Conv_I);
+                il.Emit(OpCodes.Stind_I);
+
+                /* hooks calling */
+                foreach (var hook in hooks)
+                {
+                    for (var argIndex = 0; argIndex < targetParameters.Length; argIndex++)
+                        il.Emit(OpCodes.Ldarga_S, (byte)argIndex);
+
+                    il.Emit(OpCodes.Call, hook);
+                    il.Emit(OpCodes.Brfalse, returnLabel);
+                }
+
+                /* target method calling */
+                
+                for (var argIndex = 0; argIndex < targetParameters.Length; argIndex++)
+                {
+                    if (targetParameters[argIndex].ParameterType.IsByRef)
+                        il.Emit(OpCodes.Ldarga_S, (byte)argIndex);
+                    else il.Emit(OpCodes.Ldarg_S, (byte)argIndex);
+                }
+
+                il.Emit(OpCodes.Call, target);
+
+                il.MarkLabel(returnLabel);
+
+                /* epilogue */
+                il.Emit(OpCodes.Ldloc_0);
+                il.Emit(OpCodes.Ldsfld, stubTargetField);
+                il.Emit(OpCodes.Stind_I);
+                il.Emit(OpCodes.Ret);
+            }
+            else
+            {
+
+            }
+        }
+    }
+}
+
+public record struct MethodInfoSummary(MethodInfo Method)
+{
+    public bool IsSignatureEquals(MethodInfoSummary equalsWith)
+    {
+        var a = Method;
+        var b = equalsWith.Method;
+
+        return IsEqualsAttributes() && IsEqualsReturnType() && IsEqualsArguments();
+
+        bool IsEqualsAttributes() => a.IsStatic == b.IsStatic;
+        bool IsEqualsReturnType() => a.ReturnType == b.ReturnType;
+        bool IsEqualsArguments()
+        {
+            var aArgs = a.GetParameters();
+            var bArgs = b.GetParameters();
+
+            if (aArgs.Length != bArgs.Length)
+                return false;
+
+            var argsCount = aArgs.Length;
+            for (var argIndex = 0; argIndex < argsCount; argIndex++)
+                if (aArgs[argIndex].ParameterType != aArgs[argIndex].ParameterType)
+                    return false;
+
+            return true;
+        }
+    }
+
+    public static implicit operator MethodInfo(MethodInfoSummary self) => self.Method;
+    public static implicit operator MethodInfoSummary(MethodInfo method) => new(method);
+    public static implicit operator MethodInfoSummary(Delegate method) => new(method.Method);
+}
+
+public unsafe class Program
 {
     public static void Main()
     {
-        var consoleType = typeof(Console);
-        var methods = consoleType.GetRuntimeMethods();
-        var target = 
-            methods
-            .Where(m => m.Name == "WriteLine")
-            .Where(m => m.GetParameters().Length == 1)
-            .Where(m => m.GetParameters()[0].ParameterType == typeof(string))
-            .ToArray()[0];
+        var hook = new MethodHook((Action<string?>)Console.WriteLine);
 
-        var sourceMethod = HookedWriteLine;
-        var source = sourceMethod.Method;
+        hook.AddHook((Delegate)HookedWriteLine);
+        hook.AddHook((Delegate)Hooked2WriteLine);
 
-        hook = new MethodHook(target, source);
         hook.Hook();
 
         while (true)
@@ -58,14 +260,28 @@ unsafe class Program
         Console.ReadLine();
     }
 
-    static MethodHook hook;
-
-    static void HookedWriteLine(string? text)
+    public static bool HookedWriteLine(ref string? text)
     {
-        hook.Unhook();
-        Console.WriteLine($"hooked: {text}");
-        Console.WriteLine(text);
-        hook.Hook();
+        Console.WriteLine("Hello from 1-th hook!");
+
+        if (text is null)
+            return true;
+
+        text += " hooked!";
+
+        return true;
+    }
+
+    public static bool Hooked2WriteLine(ref string? text)
+    {
+        Console.WriteLine("Hello from 2-th hook!");
+
+        if (text is null)
+            return true;
+
+        text = text.Substring(4);
+
+        return true;
     }
 }
 
@@ -165,7 +381,7 @@ unsafe struct clr_MethodDesc
         => GetMethodDescChunk()->GetMethodTable();
 
     public clr_MethodDescChunk* GetMethodDescChunk()
-    {
+    {   
         fixed (clr_MethodDesc* self = &this)
         {
             var val = (clr_MethodDescChunk*)((byte*)self - (sizeof(clr_MethodDescChunk) + ChunkIndex * ALIGNMENT));
@@ -192,7 +408,11 @@ unsafe struct clr_MethodDesc
                 return *(void**)((byte*)self + size);
         }
 
-        return GetMethodTable()->GetSlot(SlotNumber);
+        var methodTable = GetMethodTable();
+        if (methodTable is null)
+            return null;
+
+        return methodTable->GetSlot(SlotNumber);
     }
 
     public void SetEntryPoint(void* address) => *GetAddressOfSlot() = address;
@@ -231,7 +451,7 @@ unsafe struct clr_MethodDesc
 
     public void* GetTemporaryEntryPointIfExists()
     {
-        // var flags4 = Volatile.Load(); nah, I don't even want to write that lame code.
+        // var flags4 = Volatile.Load(); nah, I don't even want to implement that lame code.
 
         if ((Flags4 & MethodDescFlags4.TemporaryEntryPointAssigned) != 0)
             return CodeData->TemporaryEntryPoint;
@@ -361,23 +581,34 @@ unsafe struct clr_MethodDesc
 
     public void* GetStableEntryPoint() => GetMethodEntryPointIfExists();
 
-    public static clr_MethodDesc* ExtractFrom(MethodInfo op) => clr_Corelib_RuntimeMethodInfo.ExtractFrom(op)->Handle;
-        
-    public static readonly byte[] ClassificationSizes = 
-        ("08 10 30 18 18 20 10 28 10 18 38 20 20 28 18 30 18 20 40 28 28 30 20 38 20 28 48 30 30 " + 
-         "38 28 40 10 18 38 20 20 28 18 30 18 20 40 28 28 30 20 38 20 28 48 30 30 38 28 40 28 30 " + 
-         "50 38 38 40 30 48 20 28 48 30 30 38 28 40 28 30 50 38 38 40 30 48 30 38 58 40 40 48 38 " + 
-         "50 38 40 60 48 48 50 40 58 28 30 50 38 38 40 30 48 30 38 58 40 40 48 38 50 38 40 60 48 " + 
-         "48 50 40 58 40 48 68 50 50 58 48 60")
-        .Split(' ')
-        .Select(b => byte.Parse(b, System.Globalization.NumberStyles.HexNumber))
-        .ToArray();
+    public static clr_MethodDesc* ExtractFrom(MethodInfo op)
+    {
+        var a = *(nint*)(MethodInfo*)&op;
+            
+        if (op is DynamicMethod)
+            return clr_Corelib_DynamicMethod.ExtractFrom(op)->MethodHandleInternal->Handle;
+        else if (op.GetType().Name == "RuntimeMethodInfo")
+            return clr_Corelib_RuntimeMethodInfo.ExtractFrom(op)->Handle;
+        else throw new NotImplementedException();
+    }
+
+    public static readonly byte[] ClassificationSizes =
+    [
+       0x08, 0x10, 0x30, 0x18, 0x18, 0x20, 0x10, 0x28, 0x10, 0x18, 0x38, 0x20, 
+       0x20, 0x28, 0x18, 0x30, 0x18, 0x20, 0x40, 0x28, 0x28, 0x30, 0x20, 0x38, 
+       0x20, 0x28, 0x48, 0x30, 0x30, 0x38, 0x28, 0x40, 0x10, 0x18, 0x38, 0x20, 
+       0x20, 0x28, 0x18, 0x30, 0x18, 0x20, 0x40, 0x28, 0x28, 0x30, 0x20, 0x38, 
+       0x20, 0x28, 0x48, 0x30, 0x30, 0x38, 0x28, 0x40, 0x28, 0x30, 0x50, 0x38, 
+       0x38, 0x40, 0x30, 0x48, 0x20, 0x28, 0x48, 0x30, 0x30, 0x38, 0x28, 0x40, 
+       0x28, 0x30, 0x50, 0x38, 0x38, 0x40, 0x30, 0x48, 0x30, 0x38, 0x58, 0x40, 
+       0x40, 0x48, 0x38, 0x50, 0x38, 0x40, 0x60, 0x48, 0x48, 0x50, 0x40, 0x58, 
+       0x28, 0x30, 0x50, 0x38, 0x38, 0x40, 0x30, 0x48, 0x30, 0x38, 0x58, 0x40, 
+       0x40, 0x48, 0x38, 0x50, 0x38, 0x40, 0x60, 0x48, 0x48, 0x50, 0x40, 0x58, 
+       0x40, 0x48, 0x68, 0x50, 0x50, 0x58, 0x48, 0x60
+    ];
 }
 
-struct clr_AllocMemTracker 
-{
-
-}
+struct clr_AllocMemTracker { }
 
 struct clr_CoreHeader
 {
@@ -728,8 +959,6 @@ unsafe struct clr_MethodTable
 
     public void** GetSlotPtrRaw(int slotNumber)
     {
-        Console.WriteLine($"{slotNumber} {NumVirtuals}");
-
         if (slotNumber < NumVirtuals)
             return *(GetVtableIndirections() + GetIndexOfVtableIndirection(slotNumber)) + GetIndexAfterVtableIndirection(slotNumber);
         else return GetNonVirtualSlotsArray(AuxiliaryData) - (1 + (slotNumber - NumVirtuals));
@@ -799,6 +1028,22 @@ unsafe struct clr_Corelib_RuntimeMethodInfo
     public clr_MethodDesc* Handle;
 
     public static clr_Corelib_RuntimeMethodInfo* ExtractFrom(MethodInfo op) => *(clr_Corelib_RuntimeMethodInfo**)&op;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+unsafe struct clr_Corelib_DynamicMethod
+{
+    [FieldOffset(0x10)]
+    public clr_Corelib_RuntimeMethodStub* MethodHandleInternal;
+
+    public static clr_Corelib_DynamicMethod* ExtractFrom(MethodInfo op) => *(clr_Corelib_DynamicMethod**)&op;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+unsafe struct clr_Corelib_RuntimeMethodStub
+{
+    [FieldOffset(0x50)]
+    public clr_MethodDesc* Handle;
 }
 
 unsafe struct ArrayListInterator<T> where T : unmanaged
@@ -1045,10 +1290,7 @@ unsafe struct clr_ModuleBase
     public clr_LoaderAllocator* GetLoaderAllocator() => LoaderAllocator;
 
     [StructLayout(LayoutKind.Explicit)]
-    public struct vtable
-    {
-
-    }
+    public struct vtable { }
 }
 
 [StructLayout(LayoutKind.Explicit, Size = 0x3B0)]
@@ -1136,10 +1378,7 @@ unsafe struct clr_Module
     public clr_LoaderAllocator* GetLoaderAllocator() => AsModuleBase->GetLoaderAllocator();
 }
 
-unsafe struct clr_ReflectedModule
-{
-
-}
+struct clr_ReflectedModule { }
 
 [StructLayout(LayoutKind.Explicit)]
 unsafe struct clr_DomainLocalModule
