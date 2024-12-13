@@ -4,23 +4,52 @@ public unsafe class Program
 {
     public static void Main()
     {
-        var writeLineHook = MethodHook.Create((Action<string?>)Console.WriteLine);
-        writeLineHook.AddHook((Delegate)HookedWriteLine);
-        writeLineHook.AddHook((Delegate)Hooked2WriteLine);
-        writeLineHook.Hook();
+        var obj = new MyClass();
 
-        /*
-        var readLineHook = MethodHook.Create((Func<string?>)Console.ReadLine);
-        readLineHook.AddHook((Delegate)HookedReadLine);
-        readLineHook.AddHook((Delegate)Hooked2ReadLine);
-        readLineHook.Hook();
-        */
+        var methodHook = MethodHook.Create((Delegate)obj.VirtualMethod);
+        methodHook.AddHook((Delegate)HookedVirtualMethod);
+        methodHook.Enable();
 
-        Console.WriteLine("a");
+        obj.VirtualMethod();
 
         Console.ReadLine();
     }
 
+    static bool HookedVirtualMethod(ref MyClass self)
+    {
+        Console.WriteLine("Hooked method.");
+        return false;
+    }
+
+    class MyClass
+    {
+        public void NonVirtualMethod()
+        {
+            Console.WriteLine("Original method.");
+        }
+
+        public virtual void VirtualMethod()
+        {
+            Console.WriteLine("Original method.");
+        }
+    }
+}
+
+/*
+var writeLineHook = MethodHook.Create((Action<string?>)Console.WriteLine);
+writeLineHook.AddHook((Delegate)HookedWriteLine);
+writeLineHook.AddHook((Delegate)Hooked2WriteLine);
+writeLineHook.Hook();
+*/
+
+/*
+var readLineHook = MethodHook.Create((Func<string?>)Console.ReadLine);
+readLineHook.AddHook((Delegate)HookedReadLine);
+readLineHook.AddHook((Delegate)Hooked2ReadLine);
+readLineHook.Hook();
+*/
+
+/*
     public static bool HookedWriteLine(ref string? text)
     {
         Console.WriteLine("Hello from 1-th hook!");
@@ -63,4 +92,4 @@ public unsafe class Program
 
         return false;
     }
-}
+*/
