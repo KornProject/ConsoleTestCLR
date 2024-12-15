@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Korn.CLR\Korn.CLR\Korn.CLR.csproj" />
     <ProjectReference Include="..\..\Korn.Hooking\Korn.Hooking\Korn.Hooking.csproj" />
+    <ProjectReference Include="..\..\Korn.Logger\Korn.Logger\Korn.Logger.csproj" />
   </ItemGroup>
 
 </Project>
