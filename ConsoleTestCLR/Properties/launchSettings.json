@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ConsoleTestCLR": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}

@@ -1,95 +1,74 @@
-﻿using Korn.Hooking;
+﻿using System.Runtime.CompilerServices;
 
 public unsafe class Program
 {
     public static void Main()
     {
-        var obj = new MyClass();
-
-        var methodHook = MethodHook.Create((Delegate)obj.VirtualMethod);
-        methodHook.AddHook((Delegate)HookedVirtualMethod);
-        methodHook.Enable();
-
-        obj.VirtualMethod();
-
-        Console.ReadLine();
-    }
-
-    static bool HookedVirtualMethod(ref MyClass self)
-    {
-        Console.WriteLine("Hooked method.");
-        return false;
-    }
-
-    class MyClass
-    {
-        public void NonVirtualMethod()
+        while (true)
         {
-            Console.WriteLine("Original method.");
+            Console.WriteLine($"{((Action)A).Method.MethodHandle.GetFunctionPointer():X}");
+            Console.WriteLine(GetMethodStatement(((Action)A).Method.MethodHandle.GetFunctionPointer()));
+            Console.ReadLine();
+            RuntimeHelpers.PrepareMethod(((Action)A).Method.MethodHandle);
         }
 
-        public virtual void VirtualMethod()
+        MethodStatement GetMethodStatement(nint method)
         {
-            Console.WriteLine("Original method.");
+            if ((*(uint*)method & 0xFFFFFFFF) == 0x66666666)
+                method += sizeof(int);
+
+            if (*(ushort*)method == 0x25FF &&
+                (*(uint*)(method + 0x06) & 0xFFFFFF) == 0x158B4C &&
+                *(ushort*)(method + 0x0D) == 0x25FF)
+            {
+                var innerMethod = *(nint*)(method + 6 + *(int*)(method + 2));
+                if (innerMethod - method == 0x06)
+                    return new (method, MethodType.NotCompiledStub);
+                method = innerMethod;
+
+                if ((*(uint*)method & 0xFFFFFF) == 0x058B48 &&
+                    *(byte*)(method + 0x07) == 0x66 &&
+                    *(ushort*)(method + 0x0A) == 0x0674)
+                    return new(method, MethodType.ThresholdCounterStub);
+
+                return new(method, MethodType.DirectNativeStub);
+            }
+
+            // push rbp
+            if (*(byte*)method == 0x55)
+                return new(method, MethodType.Native);
+
+            return new(method, MethodType.UnknownStub);
         }
+    }
+
+    static void A()
+    {
+        Console.WriteLine("A");
+    }
+
+    static void B()
+    {
+        Console.WriteLine("B");
     }
 }
 
-/*
-var writeLineHook = MethodHook.Create((Action<string?>)Console.WriteLine);
-writeLineHook.AddHook((Delegate)HookedWriteLine);
-writeLineHook.AddHook((Delegate)Hooked2WriteLine);
-writeLineHook.Hook();
-*/
+enum MethodType
+{
+    NotCompiledStub,
+    ThresholdCounterStub,
+    DirectNativeStub,
+    UnknownStub,
+    Native
+}
 
-/*
-var readLineHook = MethodHook.Create((Func<string?>)Console.ReadLine);
-readLineHook.AddHook((Delegate)HookedReadLine);
-readLineHook.AddHook((Delegate)Hooked2ReadLine);
-readLineHook.Hook();
-*/
+struct MethodStatement
+{
+    public MethodStatement(IntPtr pointer, MethodType type)
+        => (Pointer, MethodType) = (pointer, type);
 
-/*
-    public static bool HookedWriteLine(ref string? text)
-    {
-        Console.WriteLine("Hello from 1-th hook!");
+    public readonly IntPtr Pointer;
+    public readonly MethodType MethodType;
 
-        if (text is null)
-            return true;
-
-        text += " hooked!";
-
-        return true;
-    }
-
-    public static bool Hooked2WriteLine(ref string? text)
-    {
-        Console.WriteLine("Hello from 2-th hook!");
-
-        if (text is null)
-            return true;
-
-        text = text.Substring(4);
-
-        return true;
-    }
-
-    public static bool HookedReadLine(ref string? result)
-    {
-        if (DateTime.Now.Ticks % 3 == 0)
-        {
-            result = "bad data!";
-            return false;
-        }
-
-        return true;
-    }
-
-    public static bool Hooked2ReadLine(ref string? result)
-    {
-        if (result is null)
-            result = "hooked text!";
-
-        return false;
-    }
-*/
+    public override string ToString() => $"MethodStatement{{ Pointer: {Convert.ToString((long)Pointer, 16)}, MethodType: {MethodType} }}";
+}

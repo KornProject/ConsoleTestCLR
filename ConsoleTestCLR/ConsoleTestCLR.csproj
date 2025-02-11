@@ -9,10 +9,16 @@
     <Platforms>x64</Platforms>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Optimize>True</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Optimize>True</Optimize>
+  </PropertyGroup>
+
   <ItemGroup>
-    <ProjectReference Include="..\..\Korn.CLR\Korn.CLR\Korn.CLR.csproj" />
-    <ProjectReference Include="..\..\Korn.Hooking\Korn.Hooking\Korn.Hooking.csproj" />
-    <ProjectReference Include="..\..\Korn.Logger\Korn.Logger\Korn.Logger.csproj" />
+    <ProjectReference Include="..\..\Korn.CoreCLR\Korn.CoreCLR\Korn.CoreCLR.csproj" />
   </ItemGroup>
 
 </Project>
