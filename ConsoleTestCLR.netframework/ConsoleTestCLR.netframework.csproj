@@ -62,11 +62,5 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Korn.CLR\Korn.CLR\Korn.CLR.csproj">
-      <Project>{6e451e56-5923-412c-9329-29a887bf1e82}</Project>
-      <Name>Korn.CLR</Name>
-    </ProjectReference>
-  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

@@ -5,6 +5,8 @@ public unsafe class Program
 {
     public static void Main()
     {
+        var a = ((Action)A).Method;
+
         while (true)
         {
             Console.WriteLine(Hex(((Action)A).Method.MethodHandle.GetFunctionPointer()));

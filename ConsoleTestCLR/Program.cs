@@ -1,74 +1,50 @@
-﻿using System.Runtime.CompilerServices;
+﻿using Korn.Hooking;
 
 public unsafe class Program
 {
     public static void Main()
-    {
-        while (true)
-        {
-            Console.WriteLine($"{((Action)A).Method.MethodHandle.GetFunctionPointer():X}");
-            Console.WriteLine(GetMethodStatement(((Action)A).Method.MethodHandle.GetFunctionPointer()));
-            Console.ReadLine();
-            RuntimeHelpers.PrepareMethod(((Action)A).Method.MethodHandle);
-        }
+    {        
+        /*
+        var a = new MethodStatement(((Delegate)A).Method);
+        var b = new MethodStatement(((Delegate)B).Method);
 
-        MethodStatement GetMethodStatement(nint method)
-        {
-            if ((*(uint*)method & 0xFFFFFFFF) == 0x66666666)
-                method += sizeof(int);
+        a.EnsureMethodIsCompiled();
+        b.EnsureMethodIsCompiled();
 
-            if (*(ushort*)method == 0x25FF &&
-                (*(uint*)(method + 0x06) & 0xFFFFFF) == 0x158B4C &&
-                *(ushort*)(method + 0x0D) == 0x25FF)
-            {
-                var innerMethod = *(nint*)(method + 6 + *(int*)(method + 2));
-                if (innerMethod - method == 0x06)
-                    return new (method, MethodType.NotCompiledStub);
-                method = innerMethod;
+        Console.WriteLine($"{a.MethodPointer:X} {b.MethodPointer:X}");
+        Console.ReadLine();
+        A();
+        Console.ReadLine();        
+        */
 
-                if ((*(uint*)method & 0xFFFFFF) == 0x058B48 &&
-                    *(byte*)(method + 0x07) == 0x66 &&
-                    *(ushort*)(method + 0x0A) == 0x0674)
-                    return new(method, MethodType.ThresholdCounterStub);
+        var hook = MethodHook.Create(A);
+        hook.AddHook(B);
+        hook.AddHook(C);
+        hook.Enable();
 
-                return new(method, MethodType.DirectNativeStub);
-            }
+        Console.WriteLine("pre");
+        Console.ReadLine();
+        var result = A(1000, 100, 10, 1);
+        Console.WriteLine(result);
 
-            // push rbp
-            if (*(byte*)method == 0x55)
-                return new(method, MethodType.Native);
-
-            return new(method, MethodType.UnknownStub);
-        }
+        Console.WriteLine("end");
+        Console.ReadLine();
     }
 
-    static void A()
+    static int A(int a1, int a2, int a3, int a4)
     {
-        Console.WriteLine("A");
+        return a1 + a2 + a3 + a4;
     }
 
-    static void B()
+    static bool B(ref int a1, ref int a2, ref int a3, ref int a4, ref int result)
     {
-        Console.WriteLine("B");
+        a1 *= 2;
+        return true;
     }
-}
 
-enum MethodType
-{
-    NotCompiledStub,
-    ThresholdCounterStub,
-    DirectNativeStub,
-    UnknownStub,
-    Native
-}
-
-struct MethodStatement
-{
-    public MethodStatement(IntPtr pointer, MethodType type)
-        => (Pointer, MethodType) = (pointer, type);
-
-    public readonly IntPtr Pointer;
-    public readonly MethodType MethodType;
-
-    public override string ToString() => $"MethodStatement{{ Pointer: {Convert.ToString((long)Pointer, 16)}, MethodType: {MethodType} }}";
+    static bool C(ref int a1, ref int a2, ref int a3, ref int a4, ref int result)
+    {
+        a2 *= 2;
+        return true;
+    }
 }
