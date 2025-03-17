@@ -18,8 +18,8 @@ public unsafe class Program
         */
 
         var hook = MethodHook.Create(A);
-        hook.AddHook(B);
-        hook.AddHook(C);
+        hook.AddEntry(B);
+        hook.AddEntry(C);
         hook.Enable();
 
         Console.WriteLine("pre");
