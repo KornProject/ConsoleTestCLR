@@ -22,7 +22,7 @@
     <ProjectReference Include="..\..\Korn.Logger\Korn.Logger\Korn.Logger.csproj" />
     <ProjectReference Include="..\..\Korn.Shared.Internal\Korn.Shared.Internal\Korn.Shared.Internal.csproj" />
     <ProjectReference Include="..\..\Korn.Shared\Korn.Shared\Korn.Shared.csproj" />
-    <ProjectReference Include="..\..\Korn.Utils.Assembler\Korn.Utils.Assembler\Korn.Utils.Assembler.csproj" />
+    <ProjectReference Include="..\..\Korn.Modules.Assembler\Korn.Modules.Assembler\Korn.Modules.Assembler.csproj" />
     <ProjectReference Include="..\..\Korn.Utils.Memory\Korn.Utils.Memory\Korn.Utils.Memory.csproj" />
   </ItemGroup>
 
